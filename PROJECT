@@ -8,4 +8,14 @@ layout:
 - go.kubebuilder.io/v4
 projectName: sregym-controller
 repo: yimingsu01/sregym-controller
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: sregym-controller.io
+  group: batch
+  kind: SREGymExperiment
+  path: yimingsu01/sregym-controller/api/v1
+  version: v1
 version: "3"

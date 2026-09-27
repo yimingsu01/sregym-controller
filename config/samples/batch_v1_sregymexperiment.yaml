@@ -1,0 +1,9 @@
+apiVersion: batch.sregym-controller.io/v1
+kind: SREGymExperiment
+metadata:
+  labels:
+    app.kubernetes.io/name: sregym-controller
+    app.kubernetes.io/managed-by: kustomize
+  name: sregymexperiment-sample
+spec:
+  # TODO(user): Add fields here
