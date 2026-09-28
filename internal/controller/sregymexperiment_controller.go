@@ -88,7 +88,7 @@ func (r *SREGymExperimentReconciler) ensureResultsPVC(
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: []corev1.PersistentVolumeAccessMode{
-				corev1.ReadWriteMany,
+				corev1.ReadWriteOnce,
 			},
 
 			Resources: corev1.VolumeResourceRequirements{

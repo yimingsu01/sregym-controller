@@ -6,4 +6,21 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: sregymexperiment-sample
 spec:
-  # TODO(user): Add fields here
+  experimentName: local-live-test
+  # Informational: the controller currently runs its fixed image, not this commit.
+  experimentCommit: "8c379a60920bc9a1398ba003f4e254efc592f3dd"
+  agent: codex
+  model: gpt-6-luna
+  judgeModel: gpt-6-luna
+  # Add at least one problem ID before applying this resource.
+  problems: 
+    - "incorrect_port_assignment"
+    - "namespace_memory_limit"
+    - "valkey_auth_disruption"
+  # Create this Secret in the experiment namespace with OPENAI_API_KEY.
+  credentialsSecretRef:
+    name: sregym-credentials
+  resultsStorage:
+    size: 10Gi
+    # Omit to use the default StorageClass. It must support ReadWriteMany.
+    # storageClassName: your-rwx-storage-class
