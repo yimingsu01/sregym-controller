@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -101,6 +103,27 @@ func (r *SREGymExperimentReconciler) ensureResultsPVC(
 	return r.Create(ctx, pvc)
 }
 
+// problemJobName returns a stable DNS label while keeping normalized IDs distinct.
+func problemJobName(experimentName, problem string) string {
+	digest := sha256.Sum256([]byte(experimentName + "\x00" + problem))
+	suffix := fmt.Sprintf("-%x", digest[:6])
+	prefix := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			return r
+		}
+		return '-'
+	}, strings.ToLower(experimentName+"-problem-"+problem))
+	prefix = strings.Trim(prefix, "-")
+	if len(prefix) > 63-len(suffix) {
+		prefix = prefix[:63-len(suffix)]
+	}
+	prefix = strings.TrimRight(prefix, "-")
+	if prefix == "" {
+		prefix = "job"
+	}
+	return prefix + suffix
+}
+
 func (r *SREGymExperimentReconciler) jobForProblem(
 	experiment *sregymv1.SREGymExperiment,
 	jobName string,
@@ -111,6 +134,15 @@ func (r *SREGymExperimentReconciler) jobForProblem(
 	backoffLimit := int32(2)
 	privileged := true
 	runAsUser := int64(0)
+
+	var envFrom []corev1.EnvFromSource
+	if ref := experiment.Spec.CredentialsSecretRef; ref != nil && ref.Name != "" {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: *ref,
+			},
+		})
+	}
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -149,15 +181,7 @@ func (r *SREGymExperimentReconciler) jobForProblem(
 								experiment.Spec.JudgeModel,
 							},
 
-							EnvFrom: []corev1.EnvFromSource{
-								{
-									SecretRef: &corev1.SecretEnvSource{
-										LocalObjectReference: corev1.LocalObjectReference{
-											Name: experiment.Spec.CredentialsSecretRef.Name,
-										},
-									},
-								},
-							},
+							EnvFrom: envFrom,
 
 							VolumeMounts: []corev1.VolumeMount{
 								{
@@ -261,7 +285,7 @@ func (r *SREGymExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	completed := 0
 	failed := 0
 	for _, problem := range problems {
-		jobName := fmt.Sprintf("%s-problem-%s", exp.Name, problem)
+		jobName := problemJobName(exp.Name, problem)
 
 		var existingJob batchv1.Job
 		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: exp.Namespace}, &existingJob)
