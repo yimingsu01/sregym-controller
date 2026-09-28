@@ -17,12 +17,21 @@ limitations under the License.
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+
+type ResultsStorageSpec struct {
+	// +kubebuilder:default="10Gi"
+	Size string `json:"size,omitempty"`
+
+	// +optional
+	StorageClassName *string `json:"storageClassName,omitempty"`
+}
 
 // SREGymExperimentSpec defines the desired state of SREGymExperiment
 type SREGymExperimentSpec struct {
@@ -33,7 +42,43 @@ type SREGymExperimentSpec struct {
 
 	// foo is an example field of SREGymExperiment. Edit sregymexperiment_types.go to remove/update
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// Foo *string `json:"foo,omitempty"`
+
+	// +kubebuilder:validation:MinLength=0
+	// +required
+	ExperimentName string `json:"experimentName"`
+
+	// +kubebuilder:validation:MinLength=0
+	// +required
+	// Sregym commit to run the experiment with
+	ExperimentCommit string `json:"experimentCommit"`
+
+	// +kubebuilder:validation:MinLength=0
+	// +required
+	Agent string `json:"agent"`
+
+	// +kubebuilder:validation:MinLength=0
+	// +required
+	Model string `json:"model"`
+
+	// +optional
+	// sregym suite in the experiment
+	ExperimentSuite string `json:"experimentSuite,omitempty"`
+
+	// +optional
+	// +kubebuilder:default="anthropic/claude-sonnet-5"
+	// sregym judge model in the experiment
+	JudgeModel string `json:"judgeModel,omitempty"`
+
+	// +required
+	// +kubebuilder:validation:MinItems=1
+	Problems []string `json:"problems"`
+
+	// +optional
+	CredentialsSecretRef *corev1.LocalObjectReference `json:"credentialsSecretRef,omitempty"`
+
+	// +required
+	ResultsStorage ResultsStorageSpec `json:"resultsStorage"`
 }
 
 // SREGymExperimentStatus defines the observed state of SREGymExperiment.
@@ -43,6 +88,8 @@ type SREGymExperimentStatus struct {
 
 	// For Kubernetes API conventions, see:
 	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// +optional
+	ExperimentStartTime *metav1.Time `json:"experimentStartTime,omitempty"`
 
 	// conditions represent the current state of the SREGymExperiment resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.

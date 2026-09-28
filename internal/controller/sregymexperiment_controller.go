@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,6 +33,11 @@ type SREGymExperimentReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
+
+// steps of this controller
+// for each of the problem, create a job resource that runs the problem
+// in the cluster. create 1 PVC for all jobs in the one CR.
+// The job resource should specify the exact commands to run the problem on SREGYm.
 
 // +kubebuilder:rbac:groups=batch.sregym-controller.io,resources=sregymexperiments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch.sregym-controller.io,resources=sregymexperiments/status,verbs=get;update;patch
@@ -47,9 +53,15 @@ type SREGymExperimentReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.25.0/pkg/reconcile
 func (r *SREGymExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
-	// TODO(user): your logic here
+	// load the experiment by name
+	var exp batchv1.SREGymExperiment
+	if err := r.Get(ctx, req.NamespacedName, &exp); err != nil {
+		if apierrors.IsNotFound(err) {
+			log.Info
+		}
+	}
 
 	return ctrl.Result{}, nil
 }
