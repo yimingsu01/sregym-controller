@@ -109,6 +109,8 @@ func (r *SREGymExperimentReconciler) jobForProblem(
 ) *batchv1.Job {
 
 	backoffLimit := int32(2)
+	privileged := true
+	runAsUser := int64(0)
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -124,9 +126,16 @@ func (r *SREGymExperimentReconciler) jobForProblem(
 					Containers: []corev1.Container{
 						{
 							Name:  "sregym",
-							Image: "sregym:latest",
+							Image: "yimingsu01/sregym-dind:latest",
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: &privileged,
+								RunAsUser:  &runAsUser,
+							},
 
 							Args: []string{
+								"python",
+								"main.py",
+
 								"--problem",
 								problem,
 
@@ -153,7 +162,11 @@ func (r *SREGymExperimentReconciler) jobForProblem(
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "results",
-									MountPath: "/results",
+									MountPath: "/opt/sregym/results",
+								},
+								{
+									Name:      "docker-data",
+									MountPath: "/var/lib/docker",
 								},
 							},
 						},
@@ -165,6 +178,14 @@ func (r *SREGymExperimentReconciler) jobForProblem(
 							VolumeSource: corev1.VolumeSource{
 								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 									ClaimName: pvcName,
+								},
+							},
+						},
+						{
+							Name: "docker-data",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{
+									Medium: corev1.StorageMediumDefault,
 								},
 							},
 						},
@@ -185,6 +206,7 @@ func (r *SREGymExperimentReconciler) jobForProblem(
 // +kubebuilder:rbac:groups=batch.sregym-controller.io,resources=sregymexperiments/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs/status,verbs=get
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -235,36 +257,100 @@ func (r *SREGymExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
+	// counters for on going exp
+	completed := 0
+	failed := 0
 	for _, problem := range problems {
 		jobName := fmt.Sprintf("%s-problem-%s", exp.Name, problem)
 
 		var existingJob batchv1.Job
-		if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: exp.Namespace}, &existingJob); err != nil {
-			log.Error(err, "Error when getting Job for problem %s", problem)
-		}
+		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: exp.Namespace}, &existingJob)
+		switch {
+		case err == nil:
+			for _, condition := range existingJob.Status.Conditions {
+				if condition.Status != corev1.ConditionTrue {
+					continue
+				}
+				switch condition.Type {
+				case batchv1.JobComplete:
+					completed++
+				case batchv1.JobFailed:
+					failed++
+				}
+			}
+			continue
+		case apierrors.IsNotFound(err):
+			// create job
+			// if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: exp.Namespace}, &existingJob); err != nil {
+			// 	log.Error(err, "Failed to get Job", "problem", problem, "job", jobName)
+			// }
+			job := r.jobForProblem(
+				&exp,
+				jobName,
+				problem,
+				pvcName,
+			)
 
-		job := r.jobForProblem(
-			&exp,
-			jobName,
-			problem,
-			pvcName,
-		)
+			if err := controllerutil.SetControllerReference(
+				&exp,
+				job,
+				r.Scheme,
+			); err != nil {
+				return ctrl.Result{}, err
+			}
 
-		if err := controllerutil.SetControllerReference(
-			&exp,
-			job,
-			r.Scheme,
-		); err != nil {
+			log.Info(
+				"creating job",
+				"job", jobName,
+				"problem", problem,
+			)
+
+			if err := r.Create(ctx, job); err != nil {
+				return ctrl.Result{}, err
+			}
+		default:
 			return ctrl.Result{}, err
 		}
+	}
 
-		log.Info(
-			"creating job",
-			"job", jobName,
-			"problem", problem,
-		)
+	before := exp.DeepCopy()
 
-		if err := r.Create(ctx, job); err != nil {
+	activeType := typeProgressingExperiment
+	reason := "JobsRunning"
+	message := fmt.Sprintf("%d/%d Jobs completed; %d failed", completed, len(problems), failed)
+
+	switch {
+	case failed > 0:
+		activeType = typeDegradedExperiment
+		reason = "JobFailed"
+	case len(problems) > 0 && completed == len(problems):
+		activeType = typeAvailableExperiment
+		reason = "AllJobsCompleted"
+	}
+
+	changed := false
+	for _, conditionType := range []string{
+		typeProgressingExperiment,
+		typeDegradedExperiment,
+		typeAvailableExperiment,
+	} {
+		status := metav1.ConditionFalse
+		if conditionType == activeType {
+			status = metav1.ConditionTrue
+		}
+		if meta.SetStatusCondition(&exp.Status.Conditions, metav1.Condition{
+			Type:               conditionType,
+			Status:             status,
+			Reason:             reason,
+			Message:            message,
+			ObservedGeneration: exp.Generation,
+		}) {
+			changed = true
+		}
+	}
+	// this is the real API call to k8s api server
+	if changed {
+		if err := r.Status().Patch(ctx, &exp, client.MergeFrom(before)); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -276,6 +362,7 @@ func (r *SREGymExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 func (r *SREGymExperimentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&sregymv1.SREGymExperiment{}).
+		Owns(&batchv1.Job{}).
 		Named("sregymexperiment").
 		Complete(r)
 }
